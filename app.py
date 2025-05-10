@@ -221,6 +221,29 @@ def main():
     if 'selected_groups' not in st.session_state:
         st.session_state.selected_groups = []
 
+    # Debug Secrets (Uncomment for local testing, remove in production)
+    # st.write("Available secrets:", list(st.secrets.keys()))
+
+    # Verify Secrets
+    try:
+        if "gemini" not in st.secrets or "api_key" not in st.secrets["gemini"]:
+            st.error(
+                "Gemini API key not found. Please add the following to your secrets.toml or Streamlit Cloud Secrets:\n"
+                "```toml\n[gemini]\napi_key = \"your_gemini_api_key\"\n```"
+            )
+            return
+        if "wordpress" not in st.secrets or not all(
+            key in st.secrets["wordpress"] for key in ["username", "app_password", "site_url"]
+        ):
+            st.error(
+                "WordPress credentials incomplete. Please add to secrets.toml or Streamlit Cloud Secrets:\n"
+                "```toml\n[wordpress]\nusername = \"your_username\"\napp_password = \"your_application_password\"\nsite_url = \"https://yourwordpresssite.com\"\n```"
+            )
+            return
+    except Exception as e:
+        st.error(f"Error accessing secrets: {str(e)[:100]}. Please check your secrets.toml configuration.")
+        return
+
     # Sidebar for Inputs
     with st.sidebar:
         st.header("🔍 Search Settings")
