@@ -3,38 +3,23 @@ import pandas as pd
 import requests
 import html
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, urljoin
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
-from fake_useragent import UserAgent
-import time
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
-import socket
 
 # Streamlit Configuration
-st.set_page_config(page_title="WhatsApp Content Generator", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="WhatsApp Content Generator", layout="wide")
 
-# Custom CSS for Improved UI
+# Custom CSS for Responsive Table
 st.markdown("""
 <style>
-body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f6; }
-.main-title { font-size: 2.5em; color: #25D366; text-align: center; margin-bottom: 0; font-weight: 700; }
-.subtitle { font-size: 1.2em; color: #555; text-align: center; margin-top: 5px; margin-bottom: 20px; }
-.stButton>button { background-color: #25D366; color: white; border-radius: 8px; font-weight: bold; padding: 10px 20px; transition: all 0.3s ease; }
-.stButton>button:hover { background-color: #1EBE5A; transform: scale(1.05); }
-.stTextInput > div > div > input { border-radius: 6px; padding: 10px; border: 1px solid #ccc; }
-.stSlider > div { color: #25D366; }
-.whatsapp-groups-table { width: 100%; border-collapse: collapse; margin: 20px 0; box-shadow: 0 4px 8px rgba(0,0,0,0.1); background: white; border-radius: 8px; overflow: hidden; }
-.whatsapp-groups-table th { background-color: #343A40; color: white; padding: 12px; font-size: 0.9em; text-transform: uppercase; }
-.whatsapp-groups-table td { padding: 10px; vertical-align: middle; font-size: 0.95em; }
-.whatsapp-groups-table tr { height: 50px; border-bottom: 1px solid #eee; }
-.whatsapp-groups-table tr:nth-child(even) { background-color: #f9fafb; }
-.whatsapp-groups-table tr:hover { background-color: #e8f4f8; }
-.group-logo-img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #eee; }
-.join-button { background-color: #25D366; color: white !important; padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 0.85em; }
-.join-button:hover { background-color: #1DB954; }
-.section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-.status-message { font-size: 1em; color: #333; margin: 10px 0; }
+.whatsapp-groups-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+.whatsapp-groups-table th { background-color: #343A40; color: white; padding: 10px; }
+.whatsapp-groups-table td { padding: 8px; vertical-align: middle; }
+.whatsapp-groups-table tr { height: 50px; }
+.whatsapp-groups-table tr:nth-child(even) { background-color: #F9FAFB; }
+.group-logo-img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.join-button { background-color: #25D366; color: white; padding: 6px 12px; border-radius: 6px; text-decoration: none; }
 @media (max-width: 768px) {
     .whatsapp-groups-table { display: block; overflow-x: auto; }
     .group-logo-img { width: 30px; height: 30px; }
@@ -45,352 +30,256 @@ body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f6; }
 
 # Constants
 WHATSAPP_DOMAIN = "https://chat.whatsapp.com/"
-MAX_WORKERS = 8
-
-# Initialize Fake User Agent
-try:
-    ua = UserAgent()
-except Exception as e:
-    st.warning(f"Failed to initialize fake-useragent: {e}. Using default User-Agent.")
-    ua = None
-
-def get_headers():
-    return {
-        "User-Agent": ua.random if ua else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124",
-        "Accept-Language": "en-US,en;q=0.9"
-    }
 
 # System Prompt
 SYSTEM_PROMPT = """
 🔹 Content Objective:
+
 Craft a 500+ word SEO-optimized article promoting active and verified WhatsApp group links in a specific niche. The article should be engaging, human-like, conversational, and structured to pass AI detection tools while ranking well in search engines.
 
 🔍 SEO Details
+
 Primary Keyword: {target_keyword}
-LSI Keywords: {lsi_keywords}
-Local SEO Keywords: {local_keywords}
+
+LSI Keywords (3-5): [Insert Related Keywords]
+
+Local SEO Keywords (if relevant): [City/Country/Interest-based keywords]
 
 🌟 Meta Tags
-Meta Title: Top {target_keyword} WhatsApp Groups | Active & Verified 2025
-Meta Description: Discover the best {target_keyword} WhatsApp groups. Join active, verified links updated for 2025. Fast access & free to join!
+
+Meta Title: 50-60 characters | Keyword-rich, click-worthy
+
+Example: Top [Keyword] WhatsApp Groups | Active & Verified 2025
+
+Meta Description: 150-160 characters | Summarizes the benefit
+
+Example: Discover the best [Keyword] WhatsApp groups. Join active, verified links updated for 2025. Fast access & free to join!
 
 ✍️ Writing Guidelines
-Tone & Voice: First-person, friendly, relatable. Use "I," "we," "you".
+
+Tone & Voice: First-person, friendly, and relatable. Use "I," "we," "you".
+
 Human-Like Flow: Vary sentence length, use contractions, add casual expressions.
+
 Avoid Overuse: Don’t stuff keywords. Use naturally and sparingly.
-Bypass AI Detection: Insert real-life anecdotes, natural transitions, personal recommendations.
+
+Bypass AI Detection: Insert real-life anecdotes, natural transitions, and personal recommendations.
 
 📅 Suggested Structure & Headings
-✉️ 1. Introduction (H1)
-Hook the reader with a relatable statement. Mention what they will find. Include main keyword early.
-Example: "Looking for the most active {target_keyword} WhatsApp groups in 2025? I've spent hours researching and collecting the best, so you don't have to."
 
-📆 2. Updated {target_keyword} WhatsApp Groups for 2025 (H2)
-Use a table: Group Name + Logo + Link. Emphasize benefits or content users can expect.
+✉️ 1. Introduction (H1)
+
+Hook the reader with a relatable statement.
+
+Mention what they will find in the post.
+
+Include the main keyword early.
+
+Example:
+"Looking for the most active [Target Keyword] WhatsApp groups in 2025? I've spent hours researching and collecting the best, so you don't have to."
+
+📆 2. Updated [Target Keyword] WhatsApp Groups for 2025 (H2)
+
+Use a numbered list: Group Name + 1-2 Line Description
+
+Emphasize benefits or what kind of content users can expect.
+
 “Here are the verified and updated WhatsApp groups we’ve personally tested and found active in 2025:”
 
-🔎 3. What is {target_keyword}? (H2)
-Explain the keyword simply. Assume the reader has never heard of it. Keep it friendly and non-technical.
+Note: Insert the groups table here.
 
-🎯 4. Key Benefits of Joining {target_keyword} WhatsApp Groups (H2)
-- Stay updated with real-time info.
-- Connect with like-minded individuals.
-- Access exclusive resources.
-- Get quick responses to questions.
-- Network with experts.
+🔎 3. What is [Target Keyword]? (H2)
 
-✅ 5. How to Join & Use {target_keyword} WhatsApp Groups Effectively (H2)
-Step-by-step tutorial. Keep it casual and helpful.
-Example: "I usually bookmark the invite page or turn on group notifications to never miss updates."
+Explain the keyword simply.
 
-⚠️ 6. Common Mistakes to Avoid (H2)
-- Spam posting
-- Ignoring group rules
-- Not engaging meaningfully
-- Sharing outdated links
-- Falling for scams
+Assume the reader has never heard of it before.
 
-🤔 7. Frequently Asked Questions (H3)
-- How can I find more {target_keyword} WhatsApp groups? Explore niche forums, Reddit, and curated lists like ours.
-- Are these groups active in 2025? Yes! All groups are verified regularly.
-- Do I need admin approval? Most are open join links, but some may require approval.
-- Are there groups for specific locations? Check the tags for location-specific ones.
-- Is it safe to join? Stick to verified lists like this one, and never share personal info.
+Keep it friendly and non-technical.
+
+🎯 4. Key Benefits of Joining [Target Keyword] WhatsApp Groups (H2)
+
+Use bullet points or short paragraphs:
+
+Stay updated with real-time [industry-specific info].
+
+Connect with like-minded individuals.
+
+Access exclusive resources.
+
+Get quick responses to questions.
+
+Network with experts.
+
+✅ 5. How to Join & Use [Target Keyword] WhatsApp Groups Effectively (H2)
+
+Write a step-by-step tutorial.
+
+Keep it casual and helpful.
+
+Example:
+"I usually bookmark the invite page or turn on group notifications to never miss updates."
+
+⚠️ 6. Common Mistakes to Avoid When Using These Groups (H2)
+
+Spam posting
+
+Ignoring group rules
+
+Not engaging meaningfully
+
+Sharing outdated links
+
+Falling for scams
+
+Use a helpful and non-judgmental tone.
+
+🤔 7. Frequently Asked Questions (Use H3 for Questions)
+
+How can I find more [target keyword] WhatsApp groups?Explore niche forums, Reddit, and curated lists like ours.
+
+Are these groups really active in 2025?Yes! All groups are verified by our team regularly.
+
+Do I need admin approval to join?Most are open join links, but some may require approval.
+
+Are there groups for [specific location or subgroup]?Absolutely! Check the tags to find location-specific ones.
+
+Is it safe to join random WhatsApp groups?Stick to verified lists like this one, and never share personal info.
 
 📄 8. Conclusion (H2)
-Summarize key points. Reinforce benefits. Add a CTA (Subscribe, Share, Bookmark).
-Example: "So there you have it — the best {target_keyword} WhatsApp groups for 2025. I’ll keep updating this list, so bookmark this page!"
 
-🌐 Post Metadata
-Slug: /{target_keyword}-whatsapp-groups
-Category: WhatsApp Groups > {target_keyword}
-Tags: {target_keyword}, {lsi_keywords}, 2025, Active Groups, WhatsApp Links
+Summarize key points.
+
+Reinforce the benefits.
+
+Add a CTA (Subscribe, Share, Comment, Bookmark).
+
+Example:
+"So there you have it — the best [Target Keyword] WhatsApp groups for 2025. I’ll keep updating this list regularly, so be sure to check back or bookmark this page!"
+
+📊 SEO Optimization Checklist
+
+🌐 Post Metadata Template (for WordPress or SEO Plugin)
+
+Title: [Auto-generate or write manually]
+
+Meta Title: [Insert Meta Title Here]
+
+Meta Description: [Insert Meta Description Here]
+
+Focus Keyword: [Target Keyword]
+
+Slug: /[target-keyword]-whatsapp-groups
+
+Category: WhatsApp Groups > [Niche/Industry]
+
+Tags: [Target Keyword], [Related Keywords], [Year], Active Groups, WhatsApp Links
 """
 
 # Helper Functions
-@retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
 def validate_link(link):
-    result = {"Group Name": "", "Group Link": link, "Logo URL": "", "Status": "Error"}
+    result = {"Group Name": "Unnamed Group", "Group Link": link, "Logo URL": "", "Status": "Error"}
     try:
-        response = requests.get(link, headers=get_headers(), timeout=20, allow_redirects=True)
+        response = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
         if response.status_code == 200 and WHATSAPP_DOMAIN in response.url:
             soup = BeautifulSoup(response.text, 'html.parser')
             title = soup.find('meta', property='og:title')
             image = soup.find('meta', property='og:image')
-            group_name = html.unescape(title['content']).strip() if title and title.get('content') else ""
-            result["Group Name"] = group_name
-            result["Logo URL"] = html.unescape(image['content']) if image and image.get('content') else ""
-            result["Status"] = "Active" if group_name else "Deactivated"
+            if title and title.get('content'):
+                result["Group Name"] = html.unescape(title['content'])
+            if image and image.get('content'):
+                result["Logo URL"] = html.unescape(image['content'])
+            result["Status"] = "Active"
         else:
             result["Status"] = "Expired"
-    except requests.RequestException as e:
-        result["Status"] = f"Network Error: {str(e)[:50]}"
+    except requests.RequestException:
+        result["Status"] = "Network Error"
     return result
 
-@retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
-def scrape_google(query, top_n, progress_bar, status_text):
-    try:
-        from googlesearch import search
-    except ImportError:
-        st.error("Please install googlesearch-python: `pip install googlesearch-python`")
-        return []
-
-    status_text.text("Fetching Google search results...")
+def scrape_google(query, top_n):
+    from googlesearch import search
     links = set()
-    try:
-        search_results = list(search(query, num_results=top_n))
-    except Exception as e:
-        st.error(f"Google search failed: {str(e)[:50]}")
-        return []
-    progress_bar.progress(0.1)
-
-    with requests.Session() as session:
-        for i, url in enumerate(search_results):
-            status_text.text(f"Scraping page {i+1}/{len(search_results)}: {url[:50]}...")
-            try:
-                response = session.get(url, headers=get_headers(), timeout=15)
-                soup = BeautifulSoup(response.text, 'html.parser')
-                for a in soup.find_all('a', href=True):
-                    href = a['href']
-                    if href.startswith(WHATSAPP_DOMAIN):
-                        parsed = urlparse(href)
-                        links.add(f"{parsed.scheme}://{parsed.netloc}{parsed.path}")
-                progress_bar.progress(0.1 + (i + 1) / len(search_results) * 0.4)
-            except Exception as e:
-                st.warning(f"Error scraping {url[:50]}: {str(e)[:50]}")
-            time.sleep(0.5)  # Avoid rate limiting
+    for url in search(query, num_results=top_n):
+        try:
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for a in soup.find_all('a', href=True):
+                if a['href'].startswith(WHATSAPP_DOMAIN):
+                    links.add(a['href'])
+        except:
+            continue
     return list(links)
 
 def generate_html_table(groups):
-    if not groups:
-        return "<p style='text-align:center;color:#777;'>No active groups found.</p>"
-
-    html_output = '<table class="whatsapp-groups-table" aria-label="WhatsApp Groups">'
-    html_output += '<tr><th>Logo</th><th>Group Name</th><th>Link</th></tr>'
+    html = '<table class="whatsapp-groups-table"><tr><th>Logo</th><th>Group Name</th><th>Link</th></tr>'
     for group in groups:
-        group_name = html.escape(group.get("Group Name", "Unnamed Group") or "Unnamed Group")
-        logo_url = html.escape(group.get("Logo URL", ""))
-        link = html.escape(group.get("Group Link", ""))
-        html_output += '<tr>'
-        html_output += f'<td><img src="{logo_url}" class="group-logo-img" alt="{group_name} Logo" onerror="this.style.display=\'none\'"></td>'
-        html_output += f'<td>{group_name}</td>'
-        html_output += f'<td><a href="{link}" class="join-button" target="_blank" rel="nofollow noopener">Join</a></td>'
-        html_output += '</tr>'
-    html_output += '</table>'
-    return html_output
+        html += f'<tr><td><img src="{group["Logo URL"]}" class="group-logo-img" onerror="this.style.display=\'none\'"></td>'
+        html += f'<td>{html.escape(group["Group Name"])}</td>'
+        html += f'<td><a href="{group["Group Link"]}" class="join-button" target="_blank" rel="nofollow noopener">Join</a></td></tr>'
+    html += '</table>'
+    return html
 
 def generate_content_table(groups):
-    if not groups:
-        return "<p>No active groups available to display.</p>"
-    html_output = '<table border="1"><tr><th>Group Name</th><th>Logo</th><th>Link</th></tr>'
+    html = '<table><tr><th>Group Name</th><th>Link</th></tr>'
     for group in groups:
-        group_name = html.escape(group.get("Group Name", "Unnamed Group") or "Unnamed Group")
-        logo_url = html.escape(group.get("Logo URL", ""))
-        link = html.escape(group.get("Group Link", ""))
-        html_output += f'<tr><td>{group_name}</td><td><img src="{logo_url}" width="50" height="50" alt="{group_name} Logo"></td><td><a href="{link}" target="_blank" rel="nofollow noopener">Join</a></td></tr>'
-    html_output += '</table>'
-    return html_output
+        html += f'<tr><td>{html.escape(group["Group Name"])}</td><td><a href="{group["Group Link"]}" target="_blank" rel="nofollow noopener">Join</a></td></tr>'
+    html += '</table>'
+    return html
 
-@retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
-def get_or_create_tag_id(tag_name, auth, site_url):
-    tag_name = tag_name.strip()
-    if not tag_name:
-        return None
-    response = requests.get(f"{site_url}/wp-json/wp/v2/tags?search={tag_name}", auth=auth)
-    if response.status_code == 200 and response.json():
-        return response.json()[0]['id']
-    tag_data = {'name': tag_name}
-    response = requests.post(f"{site_url}/wp-json/wp/v2/tags", auth=auth, json=tag_data)
-    if response.status_code == 201:
-        return response.json()['id']
-    else:
-        st.warning(f"Failed to create tag '{tag_name}': {response.status_code} - {response.text[:50]}")
-        return None
-
-def filter_groups(groups, keywords, limit):
-    filtered = [g for g in groups if any(kw.lower() in g["Group Name"].lower() for kw in keywords) and g["Status"] == "Active"]
-    return filtered[:limit]
-
+# Main App
 def main():
-    st.markdown('<h1 class="main-title">WhatsApp Content Generator</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Search, Scrape, and Create SEO-Optimized Content for Your WordPress Site</p>', unsafe_allow_html=True)
+    st.title("WhatsApp Content Generator")
 
-    # Initialize Session State
+    # Inputs
+    search_query = st.text_input("Search Query", "crypto WhatsApp groups")
+    target_keyword = st.text_input("Target Keyword", "crypto")
+    post_title = st.text_input("Post Title", "Top Crypto WhatsApp Groups 2025")
+    top_n = st.slider("Number of Google Results", 1, 20, 5)
+
     if 'groups' not in st.session_state:
         st.session_state.groups = []
     if 'content' not in st.session_state:
         st.session_state.content = None
 
-    # Sidebar for Inputs
-    with st.sidebar:
-        st.header("🔍 Search Settings")
-        gemini_api_key = st.text_input("Gemini API Key", type="password", help="Enter your Gemini API key from Google AI Studio.")
-        search_query = st.text_input("Search Query", "crypto WhatsApp groups", help="Enter a Google search query to find WhatsApp groups.")
-        target_keyword = st.text_input("Target Keyword", "Crypto", help="Primary keyword for SEO content.")
-        lsi_keywords = st.text_input("LSI Keywords (comma-separated)", "cryptocurrency, bitcoin, blockchain", help="Related keywords for SEO.")
-        local_keywords = st.text_input("Local SEO Keywords", "", help="Optional: e.g., New York Crypto, USA Blockchain")
-        post_title = st.text_input("Post Title", "Top Crypto WhatsApp Groups 2025", help="Title for the WordPress post.")
-        top_n = st.slider("Google Results to Scrape", 1, 20, 5, help="Number of Google search results to analyze.")
+    if st.button("Search & Scrape"):
+        links = scrape_google(search_query, top_n)
+        with ThreadPoolExecutor() as executor:
+            results = list(executor.map(validate_link, links))
+        st.session_state.groups = [r for r in results if r["Status"] == "Active"]
+        st.success(f"Found {len(st.session_state.groups)} active groups.")
 
-        st.header("🗂️ Group Filters")
-        group_limit = st.number_input("Max Groups to Include", min_value=1, max_value=50, value=10, help="Maximum number of groups to include in the content.")
-        keywords_filter = st.text_input("Keywords to Filter Groups", "", help="Comma-separated keywords to filter groups by name.")
-
-        if st.button("Clear All Data", use_container_width=True):
-            st.session_state.groups = []
-            st.session_state.content = None
-            st.success("All data cleared!")
-            st.rerun()
-
-    # Verify WordPress Secrets
-    try:
-        if "wordpress" not in st.secrets or not all(
-            key in st.secrets["wordpress"] for key in ["username", "app_password", "site_url"]
-        ):
-            st.error(
-                "WordPress credentials incomplete. Please add to Streamlit Cloud Secrets:\n"
-                "```toml\n[wordpress]\nusername = \"your_username\"\napp_password = \"your_application_password\"\nsite_url = \"https://yourwordpresssite.com\"\n```"
-            )
-            return
-    except Exception as e:
-        st.error(f"Error accessing WordPress secrets: {str(e)[:100]}. Please check your secrets.toml configuration.")
-        return
-
-    # Search and Scrape
-    st.markdown('<div class="section">', unsafe_allow_html=True)
-    st.subheader("1. Search & Scrape Groups")
-    if st.button("Search & Scrape", use_container_width=True):
-        if not search_query:
-            st.error("Please enter a search query.")
-        else:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            links = scrape_google(search_query, top_n, progress_bar, status_text)
-            if links:
-                status_text.text(f"Validating {len(links)} links...")
-                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                    futures = {executor.submit(validate_link, link): link for link in links}
-                    results = []
-                    for i, future in enumerate(as_completed(futures)):
-                        try:
-                            result = future.result()
-                            if result["Status"] == "Active":
-                                results.append(result)
-                        except Exception as e:
-                            st.warning(f"Error validating link: {str(e)[:50]}")
-                        progress_bar.progress(0.5 + (i + 1) / len(links) * 0.4)
-                    st.session_state.groups = results
-                    status_text.success(f"Found {len(results)} active groups!")
-            else:
-                status_text.error("No WhatsApp group links found.")
-            progress_bar.progress(1.0)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Display and Filter Groups
     if st.session_state.groups:
-        st.markdown('<div class="section">', unsafe_allow_html=True)
-        st.subheader("2. Filter Groups")
-        keywords = [kw.strip().lower() for kw in keywords_filter.split(',') if kw.strip()]
-        filtered_groups = filter_groups(st.session_state.groups, keywords, group_limit)
-        html_table = generate_html_table(filtered_groups)
+        st.subheader("Active Groups")
+        html_table = generate_html_table(st.session_state.groups)
         st.markdown(html_table, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
 
-        # Generate Content
-        st.markdown('<div class="section">', unsafe_allow_html=True)
-        st.subheader("3. Generate Content")
-        if st.button("Generate Content", use_container_width=True):
-            if not filtered_groups:
-                st.error("No groups match the filter criteria.")
-            elif not gemini_api_key:
-                st.error("Please enter a Gemini API key in the sidebar.")
-            else:
-                with st.spinner("Generating SEO-optimized content..."):
-                    try:
-                        groups_table = generate_content_table(filtered_groups)
-                        prompt = SYSTEM_PROMPT.format(
-                            target_keyword=target_keyword,
-                            lsi_keywords=lsi_keywords,
-                            local_keywords=local_keywords or "None"
-                        ) + f"\n\nPost Title: {post_title}\nGroups Table:\n{groups_table}"
-                        genai.configure(api_key=gemini_api_key)
-                        model = genai.GenerativeModel('gemini-2.0-flash')  # Ensure this model name matches available Gemini API models
-                        response = model.generate_content(prompt)
-                        st.session_state.content = response.text
-                        st.success("Content generated successfully!")
-                    except Exception as e:
-                        st.error(f"Error generating content: {str(e)[:100]}. Please verify your Gemini API key and model availability.")
-        st.markdown('</div>', unsafe_allow_html=True)
+        selected_names = st.multiselect("Select Groups", [g["Group Name"] for g in st.session_state.groups], default=[g["Group Name"] for g in st.session_state.groups])
+        selected_groups = [g for g in st.session_state.groups if g["Group Name"] in selected_names]
 
-    # Display and Post Content
+        if st.button("Generate Content"):
+            groups_table = generate_content_table(selected_groups)
+            prompt = f"{SYSTEM_PROMPT.format(target_keyword=target_keyword)}\n\nTarget Keyword: {target_keyword}\nPost Title: {post_title}\nGroups Table:\n{groups_table}"
+            genai.configure(api_key=st.secrets["gemini"]["api_key"])
+            model = genai.GenerativeModel('gemini-2.0-flash')
+            with st.spinner("Generating content..."):
+                response = model.generate_content(prompt)
+                st.session_state.content = response.text
+            st.success("Content generated!")
+
     if st.session_state.content:
-        st.markdown('<div class="section">', unsafe_allow_html=True)
-        st.subheader("4. Review & Post Content")
+        st.subheader("Generated Content")
         st.markdown(st.session_state.content, unsafe_allow_html=True)
-        if st.button("Post to WordPress", use_container_width=True):
-            with st.spinner("Posting to WordPress..."):
-                try:
-                    auth = (st.secrets["wordpress"]["username"], st.secrets["wordpress"]["app_password"])
-                    site_url = st.secrets["wordpress"]["site_url"]
-
-                    # Prepare tag IDs
-                    tag_names = [target_keyword] + lsi_keywords.split(',') + ['2025', 'Active Groups', 'WhatsApp Links']
-                    tag_ids = []
-                    for tag_name in tag_names:
-                        tag_id = get_or_create_tag_id(tag_name.strip(), auth, site_url)
-                        if tag_id:
-                            tag_ids.append(tag_id)
-
-                    # Prepare post data
-                    post_data = {
-                        'title': post_title,
-                        'content': st.session_state.content,
-                        'status': 'draft',
-                        'slug': f"{target_keyword.lower().replace(' ', '-')}-whatsapp-groups",
-                        'categories': [],
-                    }
-                    if tag_ids:
-                        post_data['tags'] = tag_ids
-                    else:
-                        st.warning("No valid tags to add. Posting without tags.")
-
-                    # Post to WordPress
-                    response = requests.post(
-                        f"{site_url}/wp-json/wp/v2/posts",
-                        auth=auth,
-                        json=post_data
-                    )
-                    if response.status_code == 201:
-                        st.success("Posted as draft to WordPress!")
-                    elif response.status_code == 401:
-                        st.error("Authentication failed. Check your WordPress username and application password.")
-                    elif response.status_code == 403:
-                        st.error("Permission denied. Your user may not have sufficient privileges (needs Editor or Admin role).")
-                    else:
-                        st.error(f"Failed to post: {response.status_code} - {response.text[:200]}")
-                except Exception as e:
-                    st.error(f"Error posting to WordPress: {str(e)[:100]}. Check your secrets and network.")
-        st.markdown('</div>', unsafe_allow_html=True)
+        if st.button("Post to WordPress"):
+            auth = (st.secrets["wordpress"]["username"], st.secrets["wordpress"]["app_password"])
+            post_data = {
+                'title': post_title,
+                'content': st.session_state.content,
+                'status': 'draft'
+            }
+            response = requests.post(f"{st.secrets['wordpress']['site_url']}/wp-json/wp/v2/posts", auth=auth, json=post_data)
+            if response.status_code == 201:
+                st.success("Posted as draft!")
+            else:
+                st.error(f"Error: {response.status_code}")
 
 if __name__ == "__main__":
     main()
