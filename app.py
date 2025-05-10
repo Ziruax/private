@@ -221,32 +221,10 @@ def main():
     if 'selected_groups' not in st.session_state:
         st.session_state.selected_groups = []
 
-    # Debug Secrets (Uncomment for local testing, remove in production)
-    # st.write("Available secrets:", list(st.secrets.keys()))
-
-    # Verify Secrets
-    try:
-        if "gemini" not in st.secrets or "api_key" not in st.secrets["gemini"]:
-            st.error(
-                "Gemini API key not found. Please add the following to your secrets.toml or Streamlit Cloud Secrets:\n"
-                "```toml\n[gemini]\napi_key = \"your_gemini_api_key\"\n```"
-            )
-            return
-        if "wordpress" not in st.secrets or not all(
-            key in st.secrets["wordpress"] for key in ["username", "app_password", "site_url"]
-        ):
-            st.error(
-                "WordPress credentials incomplete. Please add to secrets.toml or Streamlit Cloud Secrets:\n"
-                "```toml\n[wordpress]\nusername = \"your_username\"\napp_password = \"your_application_password\"\nsite_url = \"https://yourwordpresssite.com\"\n```"
-            )
-            return
-    except Exception as e:
-        st.error(f"Error accessing secrets: {str(e)[:100]}. Please check your secrets.toml configuration.")
-        return
-
     # Sidebar for Inputs
     with st.sidebar:
         st.header("🔍 Search Settings")
+        gemini_api_key = st.text_input("Gemini API Key", type="password", help="Enter your Gemini API key from Google AI Studio.")
         search_query = st.text_input("Search Query", "crypto WhatsApp groups", help="Enter a Google search query to find WhatsApp groups.")
         target_keyword = st.text_input("Target Keyword", "Crypto", help="Primary keyword for SEO content.")
         lsi_keywords = st.text_input("LSI Keywords (comma-separated)", "cryptocurrency, bitcoin, blockchain", help="Related keywords for SEO.")
@@ -260,6 +238,20 @@ def main():
             st.session_state.selected_groups = []
             st.success("All data cleared!")
             st.rerun()
+
+    # Verify WordPress Secrets
+    try:
+        if "wordpress" not in st.secrets or not all(
+            key in st.secrets["wordpress"] for key in ["username", "app_password", "site_url"]
+        ):
+            st.error(
+                "WordPress credentials incomplete. Please add to Streamlit Cloud Secrets:\n"
+                "```toml\n[wordpress]\nusername = \"your_username\"\napp_password = \"your_application_password\"\nsite_url = \"https://yourwordpresssite.com\"\n```"
+            )
+            return
+    except Exception as e:
+        st.error(f"Error accessing WordPress secrets: {str(e)[:100]}. Please check your secrets.toml configuration.")
+        return
 
     # Search and Scrape
     st.markdown('<div class="section">', unsafe_allow_html=True)
@@ -315,6 +307,8 @@ def main():
         if st.button("Generate Content", use_container_width=True):
             if not selected_groups:
                 st.error("Please select at least one group.")
+            elif not gemini_api_key:
+                st.error("Please enter a Gemini API key in the sidebar.")
             else:
                 with st.spinner("Generating SEO-optimized content..."):
                     try:
@@ -324,13 +318,13 @@ def main():
                             lsi_keywords=lsi_keywords,
                             local_keywords=local_keywords or "None"
                         ) + f"\n\nPost Title: {post_title}\nGroups Table:\n{groups_table}"
-                        genai.configure(api_key=st.secrets["gemini"]["api_key"])
+                        genai.configure(api_key=gemini_api_key)
                         model = genai.GenerativeModel('gemini-2.0-flash')
                         response = model.generate_content(prompt)
                         st.session_state.content = response.text
                         st.success("Content generated successfully!")
                     except Exception as e:
-                        st.error(f"Error generating content: {str(e)[:100]}")
+                        st.error(f"Error generating content: {str(e)[:100]}. Please verify your Gemini API key.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     # Display and Post Content
@@ -360,7 +354,7 @@ def main():
                     else:
                         st.error(f"Failed to post: {response.status_code} - {response.text[:100]}")
                 except Exception as e:
-                    st.error(f"Error posting to WordPress: {str(e)[:100]}")
+                    st.error(f"Error posting to WordPress: {str(e)[:100]}. Please check your WordPress secrets.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
