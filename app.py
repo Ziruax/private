@@ -3,11 +3,13 @@ import pandas as pd
 import requests
 import html
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import google.generativeai as genai
 from fake_useragent import UserAgent
 import time
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+import socket
 
 # Streamlit Configuration
 st.set_page_config(page_title="WhatsApp Content Generator", layout="wide", initial_sidebar_state="expanded")
@@ -84,7 +86,7 @@ Hook the reader with a relatable statement. Mention what they will find. Include
 Example: "Looking for the most active {target_keyword} WhatsApp groups in 2025? I've spent hours researching and collecting the best, so you don't have to."
 
 📆 2. Updated {target_keyword} WhatsApp Groups for 2025 (H2)
-Use a table: Group Name + 1-2 Line Description + Link. Emphasize benefits or content users can expect.
+Use a table: Group Name + Logo + Link. Emphasize benefits or content users can expect.
 “Here are the verified and updated WhatsApp groups we’ve personally tested and found active in 2025:”
 
 🔎 3. What is {target_keyword}? (H2)
@@ -126,25 +128,26 @@ Tags: {target_keyword}, {lsi_keywords}, 2025, Active Groups, WhatsApp Links
 """
 
 # Helper Functions
+@retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
 def validate_link(link):
-    result = {"Group Name": "Unnamed Group", "Group Link": link, "Logo URL": "", "Status": "Error", "Description": "A community for enthusiasts."}
+    result = {"Group Name": "", "Group Link": link, "Logo URL": "", "Status": "Error"}
     try:
         response = requests.get(link, headers=get_headers(), timeout=20, allow_redirects=True)
         if response.status_code == 200 and WHATSAPP_DOMAIN in response.url:
             soup = BeautifulSoup(response.text, 'html.parser')
             title = soup.find('meta', property='og:title')
             image = soup.find('meta', property='og:image')
-            group_name = html.unescape(title['content']).strip() if title and title.get('content') else "Unnamed Group"
+            group_name = html.unescape(title['content']).strip() if title and title.get('content') else ""
             result["Group Name"] = group_name
             result["Logo URL"] = html.unescape(image['content']) if image and image.get('content') else ""
-            result["Status"] = "Active"
-            result["Description"] = f"Join this active {group_name} group for updates and discussions."
+            result["Status"] = "Active" if group_name else "Deactivated"
         else:
             result["Status"] = "Expired"
     except requests.RequestException as e:
         result["Status"] = f"Network Error: {str(e)[:50]}"
     return result
 
+@retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
 def scrape_google(query, top_n, progress_bar, status_text):
     try:
         from googlesearch import search
@@ -197,38 +200,37 @@ def generate_html_table(groups):
     return html_output
 
 def generate_content_table(groups):
-    html_output = '<table border="1"><tr><th>Group Name</th><th>Description</th><th>Link</th></tr>'
+    if not groups:
+        return "<p>No active groups available to display.</p>"
+    html_output = '<table border="1"><tr><th>Group Name</th><th>Logo</th><th>Link</th></tr>'
     for group in groups:
         group_name = html.escape(group.get("Group Name", "Unnamed Group") or "Unnamed Group")
-        desc = html.escape(group.get("Description", "A community for enthusiasts."))
+        logo_url = html.escape(group.get("Logo URL", ""))
         link = html.escape(group.get("Group Link", ""))
-        html_output += f'<tr><td>{group_name}</td><td>{desc}</td><td><a href="{link}" target="_blank" rel="nofollow noopener">Join</a></td></tr>'
+        html_output += f'<tr><td>{group_name}</td><td><img src="{logo_url}" width="50" height="50" alt="{group_name} Logo"></td><td><a href="{link}" target="_blank" rel="nofollow noopener">Join</a></td></tr>'
     html_output += '</table>'
     return html_output
 
+@retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3))
 def get_or_create_tag_id(tag_name, auth, site_url):
     tag_name = tag_name.strip()
     if not tag_name:
         return None
-    # Search for existing tag
-    response = requests.get(f"{site_url}/wp-json/wp/v2/tags", auth=auth, params={"search": tag_name})
-    if response.status_code == 200:
-        tags = response.json()
-        for tag in tags:
-            if tag["name"].lower() == tag_name.lower():
-                return tag["id"]
-    # Create new tag if not found
-    response = requests.post(f"{site_url}/wp-json/wp/v2/tags", auth=auth, json={"name": tag_name})
+    response = requests.get(f"{site_url}/wp-json/wp/v2/tags?search={tag_name}", auth=auth)
+    if response.status_code == 200 and response.json():
+        return response.json()[0]['id']
+    tag_data = {'name': tag_name}
+    response = requests.post(f"{site_url}/wp-json/wp/v2/tags", auth=auth, json=tag_data)
     if response.status_code == 201:
-        return response.json()["id"]
+        return response.json()['id']
     else:
-        if response.status_code == 403:
-            st.warning(f"Permission denied to create tag '{tag_name}'. Posting without this tag.")
-        else:
-            st.warning(f"Failed to create tag '{tag_name}': {response.status_code} - {response.text[:50]}")
+        st.warning(f"Failed to create tag '{tag_name}': {response.status_code} - {response.text[:50]}")
         return None
 
-# Main App
+def filter_groups(groups, keywords, limit):
+    filtered = [g for g in groups if any(kw.lower() in g["Group Name"].lower() for kw in keywords) and g["Status"] == "Active"]
+    return filtered[:limit]
+
 def main():
     st.markdown('<h1 class="main-title">WhatsApp Content Generator</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Search, Scrape, and Create SEO-Optimized Content for Your WordPress Site</p>', unsafe_allow_html=True)
@@ -238,8 +240,6 @@ def main():
         st.session_state.groups = []
     if 'content' not in st.session_state:
         st.session_state.content = None
-    if 'selected_groups' not in st.session_state:
-        st.session_state.selected_groups = []
 
     # Sidebar for Inputs
     with st.sidebar:
@@ -252,10 +252,13 @@ def main():
         post_title = st.text_input("Post Title", "Top Crypto WhatsApp Groups 2025", help="Title for the WordPress post.")
         top_n = st.slider("Google Results to Scrape", 1, 20, 5, help="Number of Google search results to analyze.")
 
+        st.header("🗂️ Group Filters")
+        group_limit = st.number_input("Max Groups to Include", min_value=1, max_value=50, value=10, help="Maximum number of groups to include in the content.")
+        keywords_filter = st.text_input("Keywords to Filter Groups", "", help="Comma-separated keywords to filter groups by name.")
+
         if st.button("Clear All Data", use_container_width=True):
             st.session_state.groups = []
             st.session_state.content = None
-            st.session_state.selected_groups = []
             st.success("All data cleared!")
             st.rerun()
 
@@ -306,45 +309,37 @@ def main():
     # Display and Filter Groups
     if st.session_state.groups:
         st.markdown('<div class="section">', unsafe_allow_html=True)
-        st.subheader("2. Select Groups")
-        html_table = generate_html_table(st.session_state.groups)
+        st.subheader("2. Filter Groups")
+        keywords = [kw.strip().lower() for kw in keywords_filter.split(',') if kw.strip()]
+        filtered_groups = filter_groups(st.session_state.groups, keywords, group_limit)
+        html_table = generate_html_table(filtered_groups)
         st.markdown(html_table, unsafe_allow_html=True)
-
-        group_names = [g["Group Name"] for g in st.session_state.groups if g.get("Group Name")]
-        selected_names = st.multiselect(
-            "Select Groups for Content",
-            group_names,
-            default=st.session_state.get("selected_groups", group_names),
-            help="Choose which groups to include in the article."
-        )
-        st.session_state.selected_groups = selected_names
-        selected_groups = [g for g in st.session_state.groups if g.get("Group Name") in selected_names]
         st.markdown('</div>', unsafe_allow_html=True)
 
         # Generate Content
         st.markdown('<div class="section">', unsafe_allow_html=True)
         st.subheader("3. Generate Content")
         if st.button("Generate Content", use_container_width=True):
-            if not selected_groups:
-                st.error("Please select at least one group.")
+            if not filtered_groups:
+                st.error("No groups match the filter criteria.")
             elif not gemini_api_key:
                 st.error("Please enter a Gemini API key in the sidebar.")
             else:
                 with st.spinner("Generating SEO-optimized content..."):
                     try:
-                        groups_table = generate_content_table(selected_groups)
+                        groups_table = generate_content_table(filtered_groups)
                         prompt = SYSTEM_PROMPT.format(
                             target_keyword=target_keyword,
                             lsi_keywords=lsi_keywords,
                             local_keywords=local_keywords or "None"
                         ) + f"\n\nPost Title: {post_title}\nGroups Table:\n{groups_table}"
                         genai.configure(api_key=gemini_api_key)
-                        model = genai.GenerativeModel('gemini-2.0-flash')
+                        model = genai.GenerativeModel('gemini-2.0-flash')  # Ensure this model name matches available Gemini API models
                         response = model.generate_content(prompt)
                         st.session_state.content = response.text
                         st.success("Content generated successfully!")
                     except Exception as e:
-                        st.error(f"Error generating content: {str(e)[:100]}. Please verify your Gemini API key.")
+                        st.error(f"Error generating content: {str(e)[:100]}. Please verify your Gemini API key and model availability.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     # Display and Post Content
@@ -374,9 +369,10 @@ def main():
                         'slug': f"{target_keyword.lower().replace(' ', '-')}-whatsapp-groups",
                         'categories': [],
                     }
-                    if tag_ids:  # Only include tags if we have valid IDs
+                    if tag_ids:
                         post_data['tags'] = tag_ids
-                        st.write(f"Posting with tag IDs: {tag_ids}")  # Temporary debugging
+                    else:
+                        st.warning("No valid tags to add. Posting without tags.")
 
                     # Post to WordPress
                     response = requests.post(
@@ -386,22 +382,12 @@ def main():
                     )
                     if response.status_code == 201:
                         st.success("Posted as draft to WordPress!")
-                    elif response.status_code in [401, 403]:
+                    elif response.status_code == 401:
                         st.error("Authentication failed. Check your WordPress username and application password.")
+                    elif response.status_code == 403:
+                        st.error("Permission denied. Your user may not have sufficient privileges (needs Editor or Admin role).")
                     else:
                         st.error(f"Failed to post: {response.status_code} - {response.text[:200]}")
-                        if "tags" in post_data:
-                            # Fallback: Retry without tags if tags are the issue
-                            del post_data['tags']
-                            fallback_response = requests.post(
-                                f"{site_url}/wp-json/wp/v2/posts",
-                                auth=auth,
-                                json=post_data
-                            )
-                            if fallback_response.status_code == 201:
-                                st.success("Posted as draft without tags due to tag error.")
-                            else:
-                                st.error(f"Fallback failed: {fallback_response.status_code} - {fallback_response.text[:200]}")
                 except Exception as e:
                     st.error(f"Error posting to WordPress: {str(e)[:100]}. Check your secrets and network.")
         st.markdown('</div>', unsafe_allow_html=True)
