@@ -8,7 +8,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import google.generativeai as genai
 from fake_useragent import UserAgent
 import time
-import uuid
 
 # Streamlit Configuration
 st.set_page_config(page_title="WhatsApp Content Generator", layout="wide", initial_sidebar_state="expanded")
@@ -135,12 +134,11 @@ def validate_link(link):
             soup = BeautifulSoup(response.text, 'html.parser')
             title = soup.find('meta', property='og:title')
             image = soup.find('meta', property='og:image')
-            if title and title.get('content'):
-                result["Group Name"] = html.unescape(title['content']).strip() or "Unnamed Group"
-            if image and image.get('content'):
-                result["Logo URL"] = html.unescape(image['content'])
+            group_name = html.unescape(title['content']).strip() if title and title.get('content') else "Unnamed Group"
+            result["Group Name"] = group_name
+            result["Logo URL"] = html.unescape(image['content']) if image and image.get('content') else ""
             result["Status"] = "Active"
-            result["Description"] = f"Join this active {result['Group Name']} group for updates and discussions."
+            result["Description"] = f"Join this active {group_name} group for updates and discussions."
         else:
             result["Status"] = "Expired"
     except requests.RequestException as e:
@@ -156,7 +154,11 @@ def scrape_google(query, top_n, progress_bar, status_text):
 
     status_text.text("Fetching Google search results...")
     links = set()
-    search_results = list(search(query, num_results=top_n))
+    try:
+        search_results = list(search(query, num_results=top_n))
+    except Exception as e:
+        st.error(f"Google search failed: {str(e)[:50]}")
+        return []
     progress_bar.progress(0.1)
 
     with requests.Session() as session:
@@ -173,38 +175,38 @@ def scrape_google(query, top_n, progress_bar, status_text):
                 progress_bar.progress(0.1 + (i + 1) / len(search_results) * 0.4)
             except Exception as e:
                 st.warning(f"Error scraping {url[:50]}: {str(e)[:50]}")
-        time.sleep(1)  # Avoid rate limiting
+            time.sleep(0.5)  # Avoid rate limiting
     return list(links)
 
 def generate_html_table(groups):
     if not groups:
         return "<p style='text-align:center;color:#777;'>No active groups found.</p>"
-    
-    html = '<table class="whatsapp-groups-table" aria-label="WhatsApp Groups">'
-    html += '<tr><th>Logo</th><th>Group Name</th><th>Description</th><th>Link</th></tr>'
+
+    html_output = '<table class="whatsapp-groups-table" aria-label="WhatsApp Groups">'
+    html_output += '<tr><th>Logo</th><th>Group Name</th><th>Description</th><th>Link</th></tr>'
     for group in groups:
         group_name = html.escape(group.get("Group Name", "Unnamed Group") or "Unnamed Group")
-        logo_url = group.get("Logo URL", "")
-        link = group.get("Group Link", "")
+        logo_url = html.escape(group.get("Logo URL", ""))
+        link = html.escape(group.get("Group Link", ""))
         desc = html.escape(group.get("Description", "A community for enthusiasts."))
-        html += '<tr>'
-        html += f'<td><img src="{html.escape(logo_url)}" class="group-logo-img" alt="{group_name} Logo" onerror="this.style.display=\'none\'"></td>'
-        html += f'<td>{group_name}</td>'
-        html += f'<td>{desc}</td>'
-        html += f'<td><a href="{html.escape(link)}" class="join-button" target="_blank" rel="nofollow noopener">Join</a></td>'
-        html += '</tr>'
-    html += '</table>'
-    return html
+        html_output += '<tr>'
+        html_output += f'<td><img src="{logo_url}" class="group-logo-img" alt="{group_name} Logo" onerror="this.style.display=\'none\'"></td>'
+        html_output += f'<td>{group_name}</td>'
+        html_output += f'<td>{desc}</td>'
+        html_output += f'<td><a href="{link}" class="join-button" target="_blank" rel="nofollow noopener">Join</a></td>'
+        html_output += '</tr>'
+    html_output += '</table>'
+    return html_output
 
 def generate_content_table(groups):
-    html = '<table border="1"><tr><th>Group Name</th><th>Description</th><th>Link</th></tr>'
+    html_output = '<table border="1"><tr><th>Group Name</th><th>Description</th><th>Link</th></tr>'
     for group in groups:
         group_name = html.escape(group.get("Group Name", "Unnamed Group") or "Unnamed Group")
         desc = html.escape(group.get("Description", "A community for enthusiasts."))
-        link = group.get("Group Link", "")
-        html += f'<tr><td>{group_name}</td><td>{desc}</td><td><a href="{link}" target="_blank" rel="nofollow noopener">Join</a></td></tr>'
-    html += '</table>'
-    return html
+        link = html.escape(group.get("Group Link", ""))
+        html_output += f'<tr><td>{group_name}</td><td>{desc}</td><td><a href="{link}" target="_blank" rel="nofollow noopener">Join</a></td></tr>'
+    html_output += '</table>'
+    return html_output
 
 # Main App
 def main():
@@ -259,8 +261,8 @@ def main():
                         except Exception as e:
                             st.warning(f"Error validating link: {str(e)[:50]}")
                         progress_bar.progress(0.5 + (i + 1) / len(links) * 0.4)
-                st.session_state.groups = results
-                status_text.success(f"Found {len(results)} active groups!")
+                    st.session_state.groups = results
+                    status_text.success(f"Found {len(results)} active groups!")
             else:
                 status_text.error("No WhatsApp group links found.")
             progress_bar.progress(1.0)
