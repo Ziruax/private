@@ -183,16 +183,14 @@ def generate_html_table(groups):
         return "<p style='text-align:center;color:#777;'>No active groups found.</p>"
 
     html_output = '<table class="whatsapp-groups-table" aria-label="WhatsApp Groups">'
-    html_output += '<tr><th>Logo</th><th>Group Name</th><th>Description</th><th>Link</th></tr>'
+    html_output += '<tr><th>Logo</th><th>Group Name</th><th>Link</th></tr>'
     for group in groups:
         group_name = html.escape(group.get("Group Name", "Unnamed Group") or "Unnamed Group")
         logo_url = html.escape(group.get("Logo URL", ""))
         link = html.escape(group.get("Group Link", ""))
-        desc = html.escape(group.get("Description", "A community for enthusiasts."))
         html_output += '<tr>'
         html_output += f'<td><img src="{logo_url}" class="group-logo-img" alt="{group_name} Logo" onerror="this.style.display=\'none\'"></td>'
         html_output += f'<td>{group_name}</td>'
-        html_output += f'<td>{desc}</td>'
         html_output += f'<td><a href="{link}" class="join-button" target="_blank" rel="nofollow noopener">Join</a></td>'
         html_output += '</tr>'
     html_output += '</table>'
@@ -207,6 +205,28 @@ def generate_content_table(groups):
         html_output += f'<tr><td>{group_name}</td><td>{desc}</td><td><a href="{link}" target="_blank" rel="nofollow noopener">Join</a></td></tr>'
     html_output += '</table>'
     return html_output
+
+def get_or_create_tag_id(tag_name, auth, site_url):
+    tag_name = tag_name.strip()
+    if not tag_name:
+        return None
+    # Search for existing tag
+    response = requests.get(f"{site_url}/wp-json/wp/v2/tags", auth=auth, params={"search": tag_name})
+    if response.status_code == 200:
+        tags = response.json()
+        for tag in tags:
+            if tag["name"].lower() == tag_name.lower():
+                return tag["id"]
+    # Create new tag if not found
+    response = requests.post(f"{site_url}/wp-json/wp/v2/tags", auth=auth, json={"name": tag_name})
+    if response.status_code == 201:
+        return response.json()["id"]
+    else:
+        if response.status_code == 403:
+            st.warning(f"Permission denied to create tag '{tag_name}'. Posting without this tag.")
+        else:
+            st.warning(f"Failed to create tag '{tag_name}': {response.status_code} - {response.text[:50]}")
+        return None
 
 # Main App
 def main():
@@ -336,25 +356,54 @@ def main():
             with st.spinner("Posting to WordPress..."):
                 try:
                     auth = (st.secrets["wordpress"]["username"], st.secrets["wordpress"]["app_password"])
+                    site_url = st.secrets["wordpress"]["site_url"]
+
+                    # Prepare tag IDs
+                    tag_names = [target_keyword] + lsi_keywords.split(',') + ['2025', 'Active Groups', 'WhatsApp Links']
+                    tag_ids = []
+                    for tag_name in tag_names:
+                        tag_id = get_or_create_tag_id(tag_name.strip(), auth, site_url)
+                        if tag_id:
+                            tag_ids.append(tag_id)
+
+                    # Prepare post data
                     post_data = {
                         'title': post_title,
                         'content': st.session_state.content,
                         'status': 'draft',
                         'slug': f"{target_keyword.lower().replace(' ', '-')}-whatsapp-groups",
-                        'categories': [],  # Add category IDs if needed
-                        'tags': [target_keyword, *lsi_keywords.split(','), '2025', 'Active Groups', 'WhatsApp Links']
+                        'categories': [],
                     }
+                    if tag_ids:  # Only include tags if we have valid IDs
+                        post_data['tags'] = tag_ids
+                        st.write(f"Posting with tag IDs: {tag_ids}")  # Temporary debugging
+
+                    # Post to WordPress
                     response = requests.post(
-                        f"{st.secrets['wordpress']['site_url']}/wp-json/wp/v2/posts",
+                        f"{site_url}/wp-json/wp/v2/posts",
                         auth=auth,
                         json=post_data
                     )
                     if response.status_code == 201:
                         st.success("Posted as draft to WordPress!")
+                    elif response.status_code in [401, 403]:
+                        st.error("Authentication failed. Check your WordPress username and application password.")
                     else:
-                        st.error(f"Failed to post: {response.status_code} - {response.text[:100]}")
+                        st.error(f"Failed to post: {response.status_code} - {response.text[:200]}")
+                        if "tags" in post_data:
+                            # Fallback: Retry without tags if tags are the issue
+                            del post_data['tags']
+                            fallback_response = requests.post(
+                                f"{site_url}/wp-json/wp/v2/posts",
+                                auth=auth,
+                                json=post_data
+                            )
+                            if fallback_response.status_code == 201:
+                                st.success("Posted as draft without tags due to tag error.")
+                            else:
+                                st.error(f"Fallback failed: {fallback_response.status_code} - {fallback_response.text[:200]}")
                 except Exception as e:
-                    st.error(f"Error posting to WordPress: {str(e)[:100]}. Please check your WordPress secrets.")
+                    st.error(f"Error posting to WordPress: {str(e)[:100]}. Check your secrets and network.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
