@@ -8,7 +8,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import google.generativeai as genai
 from fake_useragent import UserAgent
 import time
-import streamlit.components.v1 as components
 
 # Streamlit Configuration
 st.set_page_config(page_title="WhatsApp Content Generator", layout="wide", initial_sidebar_state="expanded")
@@ -34,7 +33,6 @@ body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f6; }
 .join-button:hover { background-color: #1DB954; }
 .section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
 .status-message { font-size: 1em; color: #333; margin: 10px 0; }
-.warning-box { background-color: #fff3cd; padding: 10px; border-radius: 6px; color: #856404; font-size: 0.9em; margin-bottom: 10px; }
 @media (max-width: 768px) {
     .whatsapp-groups-table { display: block; overflow-x: auto; }
     .group-logo-img { width: 30px; height: 30px; }
@@ -127,37 +125,6 @@ Category: WhatsApp Groups > {target_keyword}
 Tags: {target_keyword}, {lsi_keywords}, 2025, Active Groups, WhatsApp Links
 """
 
-# JavaScript to Load/Save Credentials in Local Storage
-components.html("""
-<script>
-function saveCredentials() {
-    const geminiApiKey = document.getElementById('gemini_api_key').value;
-    const wpUsername = document.getElementById('wp_username').value;
-    const wpAppPassword = document.getElementById('wp_app_password').value;
-    const wpSiteUrl = document.getElementById('wp_site_url').value;
-    localStorage.setItem('gemini_api_key', geminiApiKey);
-    localStorage.setItem('wp_username', wpUsername);
-    localStorage.setItem('wp_app_password', wpAppPassword);
-    localStorage.setItem('wp_site_url', wpSiteUrl);
-}
-
-function loadCredentials() {
-    const geminiApiKey = localStorage.getItem('gemini_api_key') || '';
-    const wpUsername = localStorage.getItem('wp_username') || '';
-    const wpAppPassword = localStorage.getItem('wp_app_password') || '';
-    const wpSiteUrl = localStorage.getItem('wp_site_url') || '';
-    const inputs = {
-        'gemini_api_key': geminiApiKey,
-        'wp_username': wpUsername,
-        'wp_app_password': wpAppPassword,
-        'wp_site_url': wpSiteUrl
-    };
-    window.parent.postMessage({type: 'SET_INPUTS', inputs: inputs}, '*');
-}
-window.onload = loadCredentials;
-</script>
-""", height=0)
-
 # Helper Functions
 def validate_link(link):
     result = {"Group Name": "Unnamed Group", "Group Link": link, "Logo URL": "", "Status": "Error", "Description": "A community for enthusiasts."}
@@ -246,13 +213,6 @@ def main():
     st.markdown('<h1 class="main-title">WhatsApp Content Generator</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Search, Scrape, and Create SEO-Optimized Content for Your WordPress Site</p>', unsafe_allow_html=True)
 
-    # Security Warning
-    st.markdown(
-        '<div class="warning-box">⚠️ <strong>Security Warning:</strong> Storing API keys and WordPress credentials in the browser is not secure. '
-        'Use this for testing only. For production, use Streamlit Cloud Secrets or environment variables.</div>',
-        unsafe_allow_html=True
-    )
-
     # Initialize Session State
     if 'groups' not in st.session_state:
         st.session_state.groups = []
@@ -260,67 +220,11 @@ def main():
         st.session_state.content = None
     if 'selected_groups' not in st.session_state:
         st.session_state.selected_groups = []
-    if 'gemini_api_key' not in st.session_state:
-        st.session_state.gemini_api_key = ""
-    if 'wp_username' not in st.session_state:
-        st.session_state.wp_username = ""
-    if 'wp_app_password' not in st.session_state:
-        st.session_state.wp_app_password = ""
-    if 'wp_site_url' not in st.session_state:
-        st.session_state.wp_site_url = ""
 
     # Sidebar for Inputs
     with st.sidebar:
-        st.header("🔍 Configuration")
-        gemini_api_key = st.text_input(
-            "Gemini API Key",
-            value=st.session_state.gemini_api_key,
-            type="password",
-            help="Enter your Gemini API key from Google AI Studio.",
-            key="gemini_api_key"
-        )
-        wp_username = st.text_input(
-            "WordPress Username",
-            value=st.session_state.wp_username,
-            help="Enter your WordPress username.",
-            key="wp_username"
-        )
-        wp_app_password = st.text_input(
-            "WordPress Application Password",
-            value=st.session_state.wp_app_password,
-            type="password",
-            help="Enter your WordPress Application Password (generated in Users > Profile).",
-            key="wp_app_password"
-        )
-        wp_site_url = st.text_input(
-            "WordPress Site URL",
-            value=st.session_state.wp_site_url,
-            help="Enter your WordPress site URL (e.g., https://yourwordpresssite.com).",
-            key="wp_site_url"
-        )
-
-        # Update Session State
-        st.session_state.gemini_api_key = gemini_api_key
-        st.session_state.wp_username = wp_username
-        st.session_state.wp_app_password = wp_app_password
-        st.session_state.wp_site_url = wp_site_url
-
-        # JavaScript to Save Credentials on Input Change
-        components.html("""
-        <script>
-        const inputs = ['gemini_api_key', 'wp_username', 'wp_app_password', 'wp_site_url'];
-        inputs.forEach(id => {
-            const input = document.getElementById(id);
-            if (input) {
-                input.addEventListener('input', () => {
-                    localStorage.setItem(id, input.value);
-                });
-            }
-        });
-        </script>
-        """, height=0)
-
         st.header("🔍 Search Settings")
+        gemini_api_key = st.text_input("Gemini API Key", type="password", help="Enter your Gemini API key from Google AI Studio.")
         search_query = st.text_input("Search Query", "crypto WhatsApp groups", help="Enter a Google search query to find WhatsApp groups.")
         target_keyword = st.text_input("Target Keyword", "Crypto", help="Primary keyword for SEO content.")
         lsi_keywords = st.text_input("LSI Keywords (comma-separated)", "cryptocurrency, bitcoin, blockchain", help="Related keywords for SEO.")
@@ -332,13 +236,22 @@ def main():
             st.session_state.groups = []
             st.session_state.content = None
             st.session_state.selected_groups = []
-            st.session_state.gemini_api_key = ""
-            st.session_state.wp_username = ""
-            st.session_state.wp_app_password = ""
-            st.session_state.wp_site_url = ""
-            components.html("<script>localStorage.clear();</script>", height=0)
-            st.success("All data and credentials cleared!")
+            st.success("All data cleared!")
             st.rerun()
+
+    # Verify WordPress Secrets
+    try:
+        if "wordpress" not in st.secrets or not all(
+            key in st.secrets["wordpress"] for key in ["username", "app_password", "site_url"]
+        ):
+            st.error(
+                "WordPress credentials incomplete. Please add to Streamlit Cloud Secrets:\n"
+                "```toml\n[wordpress]\nusername = \"your_username\"\napp_password = \"your_application_password\"\nsite_url = \"https://yourwordpresssite.com\"\n```"
+            )
+            return
+    except Exception as e:
+        st.error(f"Error accessing WordPress secrets: {str(e)[:100]}. Please check your secrets.toml configuration.")
+        return
 
     # Search and Scrape
     st.markdown('<div class="section">', unsafe_allow_html=True)
@@ -420,31 +333,28 @@ def main():
         st.subheader("4. Review & Post Content")
         st.markdown(st.session_state.content, unsafe_allow_html=True)
         if st.button("Post to WordPress", use_container_width=True):
-            if not all([wp_username, wp_app_password, wp_site_url]):
-                st.error("Please enter all WordPress credentials in the sidebar.")
-            else:
-                with st.spinner("Posting to WordPress..."):
-                    try:
-                        auth = (wp_username, wp_app_password)
-                        post_data = {
-                            'title': post_title,
-                            'content': st.session_state.content,
-                            'status': 'draft',
-                            'slug': f"{target_keyword.lower().replace(' ', '-')}-whatsapp-groups",
-                            'categories': [],  # Add category IDs if needed
-                            'tags': [target_keyword, *lsi_keywords.split(','), '2025', 'Active Groups', 'WhatsApp Links']
-                        }
-                        response = requests.post(
-                            f"{wp_site_url.rstrip('/')}/wp-json/wp/v2/posts",
-                            auth=auth,
-                            json=post_data
-                        )
-                        if response.status_code == 201:
-                            st.success("Posted as draft to WordPress!")
-                        else:
-                            st.error(f"Failed to post: {response.status_code} - {response.text[:100]}")
-                    except Exception as e:
-                        st.error(f"Error posting to WordPress: {str(e)[:100]}. Please verify your WordPress credentials and site URL.")
+            with st.spinner("Posting to WordPress..."):
+                try:
+                    auth = (st.secrets["wordpress"]["username"], st.secrets["wordpress"]["app_password"])
+                    post_data = {
+                        'title': post_title,
+                        'content': st.session_state.content,
+                        'status': 'draft',
+                        'slug': f"{target_keyword.lower().replace(' ', '-')}-whatsapp-groups",
+                        'categories': [],  # Add category IDs if needed
+                        'tags': [target_keyword, *lsi_keywords.split(','), '2025', 'Active Groups', 'WhatsApp Links']
+                    }
+                    response = requests.post(
+                        f"{st.secrets['wordpress']['site_url']}/wp-json/wp/v2/posts",
+                        auth=auth,
+                        json=post_data
+                    )
+                    if response.status_code == 201:
+                        st.success("Posted as draft to WordPress!")
+                    else:
+                        st.error(f"Failed to post: {response.status_code} - {response.text[:100]}")
+                except Exception as e:
+                    st.error(f"Error posting to WordPress: {str(e)[:100]}. Please check your WordPress secrets.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
