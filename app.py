@@ -65,9 +65,8 @@ def get_headers():
         try:
             user_agent_value = ua.random
         except Exception as e:
-            # In case ua.random fails for some reason even if ua object exists
             st.warning(f"Failed to get random User-Agent from fake_useragent: {e}. Using default.")
-            pass # Stick to default
+            pass
     return {
         "User-Agent": user_agent_value,
         "Accept-Language": "en-US,en;q=0.9"
@@ -161,7 +160,7 @@ def validate_link(link):
     result = {"Group Name": "Unnamed Group", "Group Link": link, "Logo URL": "", "Status": "Error", "Description": ""}
     try:
         response = requests.get(link, headers=get_headers(), timeout=20, allow_redirects=True)
-        response.raise_for_status() # Raise an exception for HTTP errors
+        response.raise_for_status() 
 
         if WHATSAPP_DOMAIN in response.url:
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -181,7 +180,6 @@ def validate_link(link):
                 result["Logo URL"] = html.unescape(str(logo_url_raw))
             
             result["Status"] = "Active"
-            # Description will be AI-generated later, so initialize as empty
             result["Description"] = ""
         else:
             result["Status"] = "Expired or Invalid Link"
@@ -204,7 +202,6 @@ def scrape_google(query, top_n, progress_bar, status_text):
     status_text.text(f"Fetching Google search results for: '{query}'...")
     links = set()
     try:
-        # Limit num_results to avoid issues, googlesearch can be unreliable with large numbers
         search_results = list(search(query, num_results=top_n, lang="en", sleep_interval=2))
     except Exception as e:
         st.error(f"Google search failed: {e}. Try reducing 'Google Results to Scrape' or check your connection.")
@@ -227,7 +224,6 @@ def scrape_google(query, top_n, progress_bar, status_text):
                     href = a_tag['href']
                     if href and WHATSAPP_DOMAIN in href:
                         parsed_url = urlparse(href)
-                        # Normalize: ensure scheme, netloc, and path only
                         clean_link = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
                         links.add(clean_link)
                 progress_bar.progress(0.1 + (i + 1) / len(search_results) * 0.4)
@@ -235,7 +231,7 @@ def scrape_google(query, top_n, progress_bar, status_text):
                 st.warning(f"Error scraping {url[:50]}: {type(e).__name__}. Skipping.")
             except Exception as e:
                 st.warning(f"Unexpected error scraping {url[:50]}: {e}. Skipping.")
-            time.sleep(0.5) # Be respectful to servers
+            time.sleep(0.5) 
     return list(links)
 
 def generate_html_table_for_display(groups_list):
@@ -248,7 +244,6 @@ def generate_html_table_for_display(groups_list):
     for group in groups_list:
         group_name = html.escape(str(group.get("Group Name", "N/A")))
         logo_url = html.escape(str(group.get("Logo URL", "")))
-        # Use AI-generated description if available, otherwise a placeholder
         desc = html.escape(str(group.get("Description", "Description pending...")))
         link = html.escape(str(group.get("Group Link", "#")))
         
@@ -270,28 +265,29 @@ def generate_html_table_for_ai(groups_list):
     html_output += '<tr><th style="padding: 5px; text-align: left;">Group Name</th><th style="padding: 5px; text-align: left;">Description</th><th style="padding: 5px; text-align: left;">Link</th></tr>\n'
     for group in groups_list:
         group_name = html.escape(str(group.get("Group Name", "N/A")))
-        # Ensure description is present for AI; use a generic one if somehow still missing
         desc = html.escape(str(group.get("Description") or f"A community for {group_name}."))
         link = html.escape(str(group.get("Group Link", "#")))
         html_output += f'<tr><td style="padding: 5px;">{group_name}</td><td style="padding: 5px;">{desc}</td><td style="padding: 5px;"><a href="{link}" target="_blank" rel="nofollow noopener noreferrer">Join Group</a></td></tr>\n'
     html_output += '</table>'
     return html_output
 
-def get_ai_description_for_group(group_name, api_key, genai_model):
+def get_ai_description_for_group(group_name, genai_model):
     """Generates a short description for a WhatsApp group using Gemini."""
     if not group_name or group_name == "Unnamed Group":
         return "A general community group."
+    if not genai_model:
+        st.warning("Gemini model not initialized for AI description generation.")
+        return f"A community for {group_name} fans." 
     try:
         prompt = f"Write a concise, engaging WhatsApp group description (strictly 30-60 characters) for a group named '{group_name}'. Focus on its main topic or benefit. Output only the description text, nothing else."
         response = genai_model.generate_content(prompt)
-        # Clean up the response, ensure it's within length, handle potential API errors
         desc_text = response.text.strip().replace("\n", " ")
-        if len(desc_text) > 70: # Allow a bit of leeway over 60
+        if len(desc_text) > 70: 
             desc_text = desc_text[:67] + "..."
         return desc_text if desc_text else f"Explore the {group_name} community."
     except Exception as e:
         st.warning(f"AI description generation failed for '{group_name}': {e}")
-        return f"A community for {group_name} fans." # Fallback
+        return f"A community for {group_name} fans." 
 
 # --- Main App ---
 def main():
@@ -299,14 +295,22 @@ def main():
     st.markdown('<p class="subtitle">Search, Scrape, Generate AI Content, and Post to WordPress</p>', unsafe_allow_html=True)
 
     # Initialize Session State
-    if 'all_scraped_groups' not in st.session_state: # All valid groups after scraping
+    if 'all_scraped_groups' not in st.session_state: 
         st.session_state.all_scraped_groups = []
-    if 'selected_group_names' not in st.session_state: # Names of groups selected by user
+    if 'selected_group_names' not in st.session_state: 
         st.session_state.selected_group_names = []
     if 'generated_article_content' not in st.session_state:
         st.session_state.generated_article_content = None
     if 'gemini_model' not in st.session_state:
         st.session_state.gemini_model = None
+    if 'post_title_template' not in st.session_state: # Persist template
+        st.session_state.post_title_template = "Top {target_keyword} WhatsApp Groups [Current Year]"
+    if 'target_keyword' not in st.session_state:
+        st.session_state.target_keyword = "Study Groups"
+    if 'lsi_keywords' not in st.session_state:
+        st.session_state.lsi_keywords = "student community, exam preparation, online learning"
+    if 'local_keywords' not in st.session_state:
+        st.session_state.local_keywords = ""
 
 
     # Sidebar for Inputs
@@ -319,34 +323,30 @@ def main():
         top_n = st.slider("Google Results to Scrape", 1, 15, 5, help="Number of Google search results to analyze. Higher numbers take longer and risk rate limits.")
 
         st.header("📝 Content Settings")
-        target_keyword = st.text_input("Target Keyword", "Study Groups", help="Primary keyword for SEO content.")
-        lsi_keywords = st.text_input("LSI Keywords (comma-separated)", "student community, exam preparation, online learning", help="Related keywords.")
-        local_keywords = st.text_input("Local SEO Keywords (optional)", "", help="e.g., 'New York study groups'")
-        post_title_template = st.text_input("Post Title Template", "Top {target_keyword} WhatsApp Groups [Current Year]", help="Use placeholders like {target_keyword} and [Current Year].")
+        st.session_state.target_keyword = st.text_input("Target Keyword", value=st.session_state.target_keyword, help="Primary keyword for SEO content.")
+        st.session_state.lsi_keywords = st.text_input("LSI Keywords (comma-separated)", value=st.session_state.lsi_keywords, help="Related keywords.")
+        st.session_state.local_keywords = st.text_input("Local SEO Keywords (optional)", value=st.session_state.local_keywords, help="e.g., 'New York study groups'")
+        st.session_state.post_title_template = st.text_input("Post Title Template", value=st.session_state.post_title_template, help="Use placeholders like {target_keyword} and [Current Year].")
 
         if st.button("Clear All Data & Selections", use_container_width=True, type="secondary"):
             st.session_state.all_scraped_groups = []
             st.session_state.selected_group_names = []
             st.session_state.generated_article_content = None
-            st.session_state.gemini_model = None
-            st.success("All data cleared!")
-            # No rerun needed here if UI elements below depend on these states correctly
+            # Keep API key and model if already configured
+            st.success("Scraped groups, selections, and generated content cleared!")
+            st.rerun()
 
-    # Configure Gemini Model once API key is available
+
     if gemini_api_key and not st.session_state.gemini_model:
         try:
             genai.configure(api_key=gemini_api_key)
-            # Note: 'gemini-2.0-flash' might be an internal or future name.
-            # 'gemini-1.5-flash-latest' is a common, efficient model.
-            # Using the one from your original code. Change if it causes errors.
-            st.session_state.gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest') # Changed to 1.5 flash, more common
+            st.session_state.gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest') 
             st.sidebar.success("Gemini API configured.")
         except Exception as e:
             st.sidebar.error(f"Gemini configuration failed: {e}")
             st.session_state.gemini_model = None
 
 
-    # WordPress Secrets Check (Moved up for early feedback)
     wp_configured = False
     try:
         if "wordpress" in st.secrets and all(
@@ -358,20 +358,19 @@ def main():
                 "WordPress credentials incomplete in Streamlit Secrets. Please configure them to enable posting. "
                 "Required: `wordpress.username`, `wordpress.app_password`, `wordpress.site_url`."
             )
-    except Exception: # Catches FileNotFoundError if secrets file doesn't exist locally
+    except Exception: 
         st.info("Running locally or WordPress secrets not found. Posting to WordPress will be disabled.")
 
 
-    # --- Section 1: Search & Scrape ---
     st.markdown('<div class="section">', unsafe_allow_html=True)
     st.subheader("1. Search & Scrape WhatsApp Groups")
     if st.button("Start Search & Scrape", use_container_width=True, disabled=not search_query):
-        if not search_query: # Should be disabled, but as a safeguard
+        if not search_query: 
             st.error("Please enter a search query.")
         else:
-            st.session_state.all_scraped_groups = [] # Clear previous results
-            st.session_state.selected_group_names = [] # Clear selections
-            st.session_state.generated_article_content = None # Clear old content
+            st.session_state.all_scraped_groups = [] 
+            st.session_state.selected_group_names = [] 
+            st.session_state.generated_article_content = None 
 
             progress_bar = st.progress(0, text="Initializing scrape...")
             status_text = st.empty()
@@ -386,7 +385,6 @@ def main():
                     for i, future in enumerate(as_completed(future_to_link)):
                         try:
                             result = future.result()
-                            # Filter out unnamed or error groups here
                             if result["Status"] == "Active" and result["Group Name"] != "Unnamed Group":
                                 valid_groups_found.append(result)
                         except Exception as exc:
@@ -398,33 +396,32 @@ def main():
                 status_text.success(f"Scraping complete! Found {len(valid_groups_found)} active and named groups.")
             else:
                 status_text.error("No WhatsApp group links found from Google search.")
-            progress_bar.empty() # Remove progress bar after completion
+            progress_bar.empty() 
     st.markdown('</div>', unsafe_allow_html=True)
 
 
-    # --- Section 2: Select Groups & Generate Descriptions ---
     if st.session_state.all_scraped_groups:
         st.markdown('<div class="section">', unsafe_allow_html=True)
         st.subheader("2. Review & Select Groups for Article")
 
-        # Ensure selected_group_names are valid if all_scraped_groups changes
         current_group_names_available = [g["Group Name"] for g in st.session_state.all_scraped_groups]
-        st.session_state.selected_group_names = [
-            name for name in st.session_state.selected_group_names if name in current_group_names_available
-        ]
-        if not st.session_state.selected_group_names and current_group_names_available: # If empty, default to all
-             st.session_state.selected_group_names = current_group_names_available
-
+        
+        # Preserve selection if possible, otherwise default to all
+        valid_previous_selections = [name for name in st.session_state.selected_group_names if name in current_group_names_available]
+        if not valid_previous_selections and current_group_names_available:
+            default_selection = current_group_names_available
+        else:
+            default_selection = valid_previous_selections
 
         selected_names_from_ui = st.multiselect(
             "Select groups to include in the article:",
             options=current_group_names_available,
-            default=st.session_state.selected_group_names,
+            default=default_selection,
+            key="group_multiselect", # Added key for better state handling
             help="Choose which scraped groups will be featured."
         )
         st.session_state.selected_group_names = selected_names_from_ui
 
-        # Create a list of full group dicts for selected groups
         selected_group_dicts = [
             g for g in st.session_state.all_scraped_groups if g["Group Name"] in st.session_state.selected_group_names
         ]
@@ -436,28 +433,23 @@ def main():
                 else:
                     desc_progress = st.progress(0, text="Generating AI descriptions...")
                     with st.spinner("AI is crafting short descriptions for selected groups..."):
-                        for i, group_dict in enumerate(selected_group_dicts):
-                            # Only generate if description is missing or is the default empty string
-                            if not group_dict.get("Description", "").strip():
-                                ai_desc = get_ai_description_for_group(group_dict["Group Name"], gemini_api_key, st.session_state.gemini_model)
-                                group_dict["Description"] = ai_desc
-                                # Update in the master list (all_scraped_groups) as well
-                                for master_g in st.session_state.all_scraped_groups:
-                                    if master_g["Group Name"] == group_dict["Group Name"]:
-                                        master_g["Description"] = ai_desc
-                                        break
-                            desc_progress.progress((i + 1) / len(selected_group_dicts), text=f"Describing: {group_dict['Group Name'][:30]}...")
+                        for i, group_dict_selected in enumerate(selected_group_dicts): # Iterate over copies in selected_group_dicts
+                            # Find the original dict in all_scraped_groups to update it
+                            for original_group_dict in st.session_state.all_scraped_groups:
+                                if original_group_dict["Group Name"] == group_dict_selected["Group Name"]:
+                                    if not original_group_dict.get("Description", "").strip():
+                                        ai_desc = get_ai_description_for_group(original_group_dict["Group Name"], st.session_state.gemini_model)
+                                        original_group_dict["Description"] = ai_desc
+                                    break # Found and updated original
+                            desc_progress.progress((i + 1) / len(selected_group_dicts), text=f"Describing: {group_dict_selected['Group Name'][:30]}...")
                     desc_progress.empty()
-                    st.success("AI descriptions generated for selected groups!")
-                    # Force a rerun to update the table display with new descriptions
-                    st.rerun()
+                    st.success("AI descriptions generated (or confirmed existing) for selected groups!")
+                    st.rerun() # Rerun to show updated descriptions in the table
 
-        # Display the table of all (potentially updated) selected groups
         st.markdown(generate_html_table_for_display(selected_group_dicts), unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-        # --- Section 3: Generate Article Content ---
         st.markdown('<div class="section">', unsafe_allow_html=True)
         st.subheader("3. Generate SEO Article")
         if st.button("📝 Generate Full Article Content", use_container_width=True, disabled=not selected_group_dicts or not st.session_state.gemini_model):
@@ -466,27 +458,24 @@ def main():
             elif not selected_group_dicts:
                 st.error("No groups selected to include in the article.")
             else:
-                # Check if all selected groups have descriptions
                 missing_descriptions = [g["Group Name"] for g in selected_group_dicts if not g.get("Description", "").strip()]
                 if missing_descriptions:
                     st.warning(f"Some selected groups are missing descriptions: {', '.join(missing_descriptions)}. Please generate descriptions first or they will use fallbacks.")
 
                 with st.spinner("Gemini AI is crafting your SEO-optimized article... This may take a moment."):
                     try:
-                        # Prepare the groups table HTML for the AI prompt
                         groups_html_for_ai = generate_html_table_for_ai(selected_group_dicts)
                         
                         current_year = time.strftime("%Y")
-                        final_post_title = post_title_template.replace("{target_keyword}", target_keyword).replace("[Current Year]", current_year)
+                        final_post_title = st.session_state.post_title_template.replace("{target_keyword}", st.session_state.target_keyword).replace("[Current Year]", current_year)
 
                         prompt_payload = SYSTEM_PROMPT.format(
-                            target_keyword=target_keyword,
-                            lsi_keywords=lsi_keywords,
-                            local_keywords=local_keywords if local_keywords else "Not specified",
+                            target_keyword=st.session_state.target_keyword,
+                            lsi_keywords=st.session_state.lsi_keywords,
+                            local_keywords=st.session_state.local_keywords if st.session_state.local_keywords else "Not specified",
                         )
-                        # Add table and title information to prompt for AI
                         prompt_payload += f"\n\n**Article Title to Generate:** {final_post_title}\n"
-                        prompt_payload += f"\n**Use the following table of WhatsApp groups in the 'Top {target_keyword} WhatsApp Groups of {current_year}' section:**\n{groups_html_for_ai}\n"
+                        prompt_payload += f"\n**Use the following table of WhatsApp groups in the 'Top {st.session_state.target_keyword} WhatsApp Groups of {current_year}' section:**\n{groups_html_for_ai}\n"
                         prompt_payload += f"\nRemember to replace `[Current Year]` in the content with `{current_year}`."
 
                         response = st.session_state.gemini_model.generate_content(prompt_payload)
@@ -498,14 +487,20 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-    # --- Section 4: Review & Post to WordPress ---
     if st.session_state.generated_article_content:
         st.markdown('<div class="section">', unsafe_allow_html=True)
         st.subheader("4. Review & Post to WordPress")
         
-        current_year = time.strftime("%Y")
-        final_post_title_for_wp = post_title_template.replace("{target_keyword}", target_keyword).replace("[Current Year]", current_year)
-        st.text_area("Generated Article Content:", st.session_state.generated_article_content, height=400, key="article_review_area")
+        current_year_wp = time.strftime("%Y")
+        final_post_title_for_wp = st.session_state.post_title_template.replace("{target_keyword}", st.session_state.target_keyword).replace("[Current Year]", current_year_wp)
+        
+        # Allow editing of generated content
+        st.session_state.generated_article_content = st.text_area(
+            "Generated Article Content (Editable):", 
+            value=st.session_state.generated_article_content, 
+            height=400, 
+            key="article_review_and_edit_area"
+        )
         
         if st.button("🚀 Post to WordPress as Draft", use_container_width=True, disabled=not wp_configured):
             if not wp_configured:
@@ -519,19 +514,24 @@ def main():
                         
                         auth = (wp_user, wp_pass)
                         
-                        # Removed categories and tags as requested
+                        # Define post_data dictionary
                         post_data = {
                             'title': final_post_title_for_wp,
-                            'content': st.session_state.generated_article_content, # Use content from state
+                            'content': st.session_state.generated_article_content, 
                             'status': 'draft',
-                            'slug': f"{target_keyword.lower().replace(' ', '-')}-whatsapp-groups-{current_year.lower()}" # Added year to slug for uniqueness
+                            'slug': f"{st.session_state.target_keyword.lower().replace(' ', '-')}-whatsapp-groups-{current_year_wp.lower()}"
+                            # 'tags' key is intentionally omitted as per user request
                         }
+                        
+                        # --- START DEBUGGING LINE ---
+                        st.info(f"Data being sent to WordPress: {post_data}") 
+                        # --- END DEBUGGING LINE ---
                         
                         api_url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts"
                         
                         response = requests.post(api_url, auth=auth, json=post_data, timeout=30)
                         
-                        if response.status_code == 201: # Created
+                        if response.status_code == 201: 
                             post_link = response.json().get('link', '#')
                             st.success(f"Article posted as a draft to WordPress! Edit here: {post_link}")
                         else:
@@ -540,7 +540,7 @@ def main():
                                 code = error_details.get("code", "N/A")
                                 message = error_details.get("message", "No message.")
                                 st.error(f"Failed to post to WordPress: {response.status_code} - {code}. Message: {message}")
-                                st.json(error_details) # Show full error for debugging
+                                st.json(error_details) 
                             except requests.exceptions.JSONDecodeError:
                                 st.error(f"Failed to post to WordPress: {response.status_code} - {response.text[:200]}")
                     except KeyError as e:
@@ -552,9 +552,6 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    # This check for `html` module being a string is a diagnostic.
-    # If the AttributeError persists, this might give a clue.
-    # Normally, this should not trigger if imports are correct and no reassignment happens.
     if isinstance(html, str):
         st.error("CRITICAL ERROR: The 'html' module has been overwritten by a string variable. This will cause `html.escape` to fail. Check your code for `html = ...` assignments.")
     else:
